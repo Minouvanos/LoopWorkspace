@@ -1,33 +1,11 @@
 name: Build Loop App
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "33 9 * * 3"
-    - cron: "33 7 1 * *"
 
 jobs:
   build:
     runs-on: macos-15
     steps:
-      - name: Check required secrets
-        run: |
-          MISSING=0
-          for SECRET in GH_PAT TEAMID FASTLANE_KEY_ID FASTLANE_ISSUER_ID FASTLANE_KEY MATCH_PASSWORD; do
-            if [ -z "${{ secrets.$SECRET }}" ]; then
-              echo "❌ Missing secret: $SECRET"
-              MISSING=1
-            fi
-          done
-          if [ $MISSING -eq 1 ]; then
-            echo "⚠️ One or more secrets are missing. Aborting build."
-            exit 1
-          else
-            echo "✅ All required secrets are present."
-          fi
-
-      - name: Select Xcode version
-        run: sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -38,7 +16,7 @@ jobs:
       - name: Install dependencies
         run: bundle install
 
-      - name: Fastlane Build & Archive
+      - name: Build app
         run: bundle exec fastlane build_loop
         env:
           TEAMID: ${{ secrets.TEAMID }}
@@ -48,7 +26,7 @@ jobs:
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
 
-      - name: Fastlane Upload to TestFlight
+      - name: Upload to TestFlight
         run: bundle exec fastlane release
         env:
           TEAMID: ${{ secrets.TEAMID }}
