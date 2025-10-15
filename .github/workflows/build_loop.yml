@@ -6,6 +6,10 @@ jobs:
   build:
     runs-on: macos-15
     steps:
+      - name: Set workflow permission
+        id: workflow-permission
+        run: echo "has_permission=true" >> $GITHUB_OUTPUT
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -16,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: bundle install
 
-      - name: Build app
+      - name: Build & Archive
         run: bundle exec fastlane build_loop
         env:
           TEAMID: ${{ secrets.TEAMID }}
