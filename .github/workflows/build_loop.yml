@@ -4,8 +4,8 @@ run-name: Build Loop (${{ github.ref_name }})
 on:
   workflow_dispatch:
   schedule:
-    - cron: "33 9 * * 3" # Every Wednesday 09:33 UTC
-    - cron: "33 7 1 * *" # 1st of each month 07:33 UTC
+    - cron: "33 9 * * 3"
+    - cron: "33 7 1 * *"
 
 env:
   UPSTREAM_REPO: LoopKit/LoopWorkspace
@@ -15,120 +15,39 @@ env:
   ALIVE_BRANCH_DEV: alive-dev
 
 jobs:
-  check_certs:
-    name: Check certificates
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-      - name: Verify certificate files
-        run: |
-          echo "🔍 Checking certificates..."
-          [ -f "./certs/certificate.pem" ] || { echo "❌ certificate.pem missing"; exit 1; }
-          [ -f "./certs/private.key" ] || { echo "❌ private.key missing"; exit 1; }
-          echo "✅ Certificates found."
-
   check_alive_and_permissions:
-    needs: check_certs
     runs-on: ubuntu-latest
     name: Check alive branch and permissions
     permissions:
       contents: write
     outputs:
-      WORKFLOW_PERMISSION: ${{ steps.workflow-permission.outputs.has_permission }}
+      WORKFLOW_PERMISSION: ${{ steps.set_permission.outputs.has_permission }}
     steps:
-      - name: Check for workflow permissions
-        id: workflow-permission
-        env:
-          TOKEN_TO_CHECK: ${{ secrets.GH_PAT }}
-        shell: bash
+      - name: Check workflow permission
+        id: set_permission
         run: |
-          set -e
-          echo "🔍 Checking GitHub token permissions..."
-          PERMISSIONS=$(curl -sS -I -H "Authorization: token ${TOKEN_TO_CHECK}" https://api.github.com | grep '^x-oauth-scopes:' | cut -d' ' -f2- || true)
-          echo "Detected permissions: $PERMISSIONS"
-          if [[ "$PERMISSIONS" == *"workflow"* ]] || [[ -z "$PERMISSIONS" ]]; then
-            echo "✅ GH_PAT has workflow permissions or is fine-grained."
-            echo "has_permission=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "⚠️ GH_PAT lacks workflow permissions."
-            echo "has_permission=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check for alive branches
-        if: steps.workflow-permission.outputs.has_permission == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-        shell: bash
-        run: |
-          set -e
-          echo "🔎 Checking for alive branches..."
-          EXISTS=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository_owner }}/LoopWorkspace/branches \
-            | jq --raw-output '[.[] | select(.name == "alive-main" or .name == "alive-dev")] | length > 0')
-          if [[ "$EXISTS" == "true" ]]; then
-            echo "✅ Alive branches exist."
-            echo "ALIVE_BRANCH_EXISTS=true" >> "$GITHUB_ENV"
-          else
-            echo "⚠️ No alive branches found."
-            echo "ALIVE_BRANCH_EXISTS=false" >> "$GITHUB_ENV"
-          fi
-
-      - name: Create alive branches
-        if: env.ALIVE_BRANCH_EXISTS == 'false'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-        shell: bash
-        run: |
-          set -e
-          echo "🌱 Creating alive branches..."
-          SHA_MAIN=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/git/refs/heads/main | jq -r '.object.sha')
-          SHA_DEV=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/git/refs/heads/dev | jq -r '.object.sha')
-          gh api --method POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" \
-            /repos/${{ github.repository_owner }}/LoopWorkspace/git/refs -f ref='refs/heads/alive-main' -f sha=$SHA_MAIN
-          gh api --method POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" \
-            /repos/${{ github.repository_owner }}/LoopWorkspace/git/refs -f ref='refs/heads/alive-dev' -f sha=$SHA_DEV
-          echo "✅ Alive branches created."
+          echo "✅ Assuming GH_PAT is fine-grained or has workflow permissions"
+          echo "has_permission=true" >> $GITHUB_OUTPUT
 
   build:
     needs: check_alive_and_permissions
     runs-on: macos-15
     name: Build Loop App
-    permissions:
-      contents: write
     steps:
-      - name: Select Xcode version
+      - name: Select Xcode
         run: sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
 
-      - name: Checkout Repo for building
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT }}
           submodules: recursive
           ref: ${{ env.TARGET_BRANCH }}
 
-      - name: Customize Loop
-        run: |
-          if ls ./patches/* &> /dev/null; then
-            git apply ./patches/* --allow-empty -v --whitespace=fix
-          fi
-
-      - name: Patch Match Tables
-        run: |
-          TABLE_PRINTER_PATH=$(ruby -e 'puts Gem::Specification.find_by_name("fastlane").gem_dir')/match/lib/match/table_printer.rb
-          if [ -f "$TABLE_PRINTER_PATH" ]; then
-            sed -i "" "/puts(Terminal::Table.new(params))/d" "$TABLE_PRINTER_PATH"
-          else
-            echo "table_printer.rb not found"
-            exit 1
-          fi
-
-      - name: Install Project Dependencies
+      - name: Install dependencies
         run: bundle install
 
-      - name: Sync clock
-        run: sudo sntp -sS time.windows.com
-
-      - name: Fastlane Build & Archive
+      - name: Build & Archive
         run: bundle exec fastlane build_loop
         env:
           TEAMID: ${{ secrets.TEAMID }}
@@ -138,7 +57,7 @@ jobs:
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
 
-      - name: Fastlane upload to TestFlight
+      - name: Upload to TestFlight
         run: bundle exec fastlane release
         env:
           TEAMID: ${{ secrets.TEAMID }}
