@@ -1,11 +1,11 @@
 name: 4. Build Loop
 run-name: Build Loop (${{ github.ref_name }})
+
 on:
   workflow_dispatch:
 
   # Automated builds on schedule (commented out push trigger)
   #push:
-
   schedule:
     - cron: "33 9 * * 3" # Every Wednesday 09:33 UTC
     - cron: "33 7 1 * *" # 1st of each month 07:33 UTC
@@ -37,36 +37,50 @@ jobs:
         env:
           TOKEN_TO_CHECK: ${{ secrets.GH_PAT }}
         run: |
-          PERMISSIONS=$(curl -sS -f -I -H "Authorization: token ${{ env.TOKEN_TO_CHECK }}" https://api.github.com | grep ^x-oauth-scopes: | cut -d' ' -f2-);
-          if [[ $PERMISSIONS =~ "workflow" || $PERMISSIONS == "" ]]; then
-            echo "GH_PAT holds workflow permissions or is fine-grained PAT."
+          echo "🔍 Checking GitHub token permissions..."
+          PERMISSIONS=$(curl -sS -f -I -H "Authorization: token ${{ env.TOKEN_TO_CHECK }}" https://api.github.com \
+            | grep ^x-oauth-scopes: \
+            | cut -d' ' -f2-)
+
+          if [[ $PERMISSIONS =~ "workflow" || -z "$PERMISSIONS" ]]; then
+            echo "✅ GH_PAT holds workflow permissions or is a fine-grained PAT."
             echo "has_permission=true" >> $GITHUB_OUTPUT
           else 
-            echo "GH_PAT lacks workflow permissions."
+            echo "⚠️ GH_PAT lacks workflow permissions."
             echo "Automated build features will be skipped!"
             echo "has_permission=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Check for alive branches
         if: steps.workflow-permission.outputs.has_permission == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          if [[ $(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository_owner }}/LoopWorkspace/branches | jq --raw-output '[.[] | select(.name == "alive-main" or .name == "alive-dev")] | length > 0') == "true" ]]; then
-            echo "Branches 'alive-main' or 'alive-dev' exist."
+          echo "🔎 Checking if alive branches exist..."
+          EXISTS=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository_owner }}/LoopWorkspace/branches \
+            | jq --raw-output '[.[] | select(.name == "alive-main" or .name == "alive-dev")] | length > 0')
+
+          if [[ "$EXISTS" == "true" ]]; then
+            echo "✅ Branches 'alive-main' or 'alive-dev' exist."
             echo "ALIVE_BRANCH_EXISTS=true" >> $GITHUB_ENV
           else
-            echo "Branches 'alive-main' and 'alive-dev' do not exist."
+            echo "⚠️ Branches 'alive-main' and 'alive-dev' do not exist."
             echo "ALIVE_BRANCH_EXISTS=false" >> $GITHUB_ENV
+          fi
 
       - name: Create alive branches
         if: env.ALIVE_BRANCH_EXISTS == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          echo "🌱 Creating alive branches from upstream..."
           SHA_MAIN=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/git/refs/heads/main | jq -r '.object.sha')
           SHA_DEV=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/git/refs/heads/dev | jq -r '.object.sha')
-          gh api --method POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" /repos/${{ github.repository_owner }}/LoopWorkspace/git/refs -f ref='refs/heads/alive-main' -f sha=$SHA_MAIN
-          gh api --method POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" /repos/${{ github.repository_owner }}/LoopWorkspace/git/refs -f ref='refs/heads/alive-dev' -f sha=$SHA_DEV
+          
+          gh api --method POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" \
+            /repos/${{ github.repository_owner }}/LoopWorkspace/git/refs -f ref='refs/heads/alive-main' -f sha=$SHA_MAIN
+          gh api --method POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" \
+            /repos/${{ github.repository_owner }}/LoopWorkspace/git/refs -f ref='refs/heads/alive-dev' -f sha=$SHA_DEV
 
   check_latest_from_upstream:
     needs: [check_certs, check_alive_and_permissions]
@@ -88,6 +102,7 @@ jobs:
             echo "ABORT_SYNC=false" >> $GITHUB_OUTPUT
           else
             echo "ABORT_SYNC=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Checkout target repo
         if: needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' && (vars.SCHEDULED_BUILD != 'false' || vars.SCHEDULED_SYNC != 'false')
@@ -110,7 +125,7 @@ jobs:
       - name: Show value of 'has_new_commits'
         if: needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' && vars.SCHEDULED_SYNC != 'false' && steps.check_branch.outputs.ABORT_SYNC == 'false'
         run: |
-          echo ${{ steps.sync.outputs.has_new_commits }}
+          echo "New commits detected: ${{ steps.sync.outputs.has_new_commits }}"
           echo "NEW_COMMITS=${{ steps.sync.outputs.has_new_commits }}" >> $GITHUB_OUTPUT
 
   build:
@@ -133,7 +148,7 @@ jobs:
 
       - name: Customize Loop
         run: |
-          if $(ls ./patches/* &> /dev/null); then
+          if ls ./patches/* &> /dev/null; then
             git apply ./patches/* --allow-empty -v --whitespace=fix
           fi
 
