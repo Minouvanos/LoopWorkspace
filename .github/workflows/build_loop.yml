@@ -36,25 +36,25 @@ jobs:
         id: workflow-permission
         env:
           TOKEN_TO_CHECK: ${{ secrets.GH_PAT }}
+        shell: bash
         run: |
           echo "🔍 Checking GitHub token permissions..."
-          PERMISSIONS=$(curl -sS -f -I -H "Authorization: token ${{ env.TOKEN_TO_CHECK }}" https://api.github.com \
-            | grep ^x-oauth-scopes: \
-            | cut -d' ' -f2-)
+          PERMISSIONS=$(curl -sS -f -I -H "Authorization: token ${TOKEN_TO_CHECK}" https://api.github.com | grep ^x-oauth-scopes: | cut -d' ' -f2-)
+          echo "Detected permissions: $PERMISSIONS"
 
-          if [[ $PERMISSIONS =~ "workflow" || -z "$PERMISSIONS" ]]; then
-            echo "✅ GH_PAT holds workflow permissions or is a fine-grained PAT."
-            echo "has_permission=true" >> $GITHUB_OUTPUT
-          else 
+          if [[ "$PERMISSIONS" == *"workflow"* || -z "$PERMISSIONS" ]]; then
+            echo "✅ GH_PAT has workflow permissions or is a fine-grained PAT."
+            echo "has_permission=true" >> "$GITHUB_OUTPUT"
+          else
             echo "⚠️ GH_PAT lacks workflow permissions."
-            echo "Automated build features will be skipped!"
-            echo "has_permission=false" >> $GITHUB_OUTPUT
+            echo "has_permission=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check for alive branches
         if: steps.workflow-permission.outputs.has_permission == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        shell: bash
         run: |
           echo "🔎 Checking if alive branches exist..."
           EXISTS=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository_owner }}/LoopWorkspace/branches \
@@ -62,21 +62,22 @@ jobs:
 
           if [[ "$EXISTS" == "true" ]]; then
             echo "✅ Branches 'alive-main' or 'alive-dev' exist."
-            echo "ALIVE_BRANCH_EXISTS=true" >> $GITHUB_ENV
+            echo "ALIVE_BRANCH_EXISTS=true" >> "$GITHUB_ENV"
           else
             echo "⚠️ Branches 'alive-main' and 'alive-dev' do not exist."
-            echo "ALIVE_BRANCH_EXISTS=false" >> $GITHUB_ENV
+            echo "ALIVE_BRANCH_EXISTS=false" >> "$GITHUB_ENV"
           fi
 
       - name: Create alive branches
         if: env.ALIVE_BRANCH_EXISTS == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        shell: bash
         run: |
           echo "🌱 Creating alive branches from upstream..."
           SHA_MAIN=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/git/refs/heads/main | jq -r '.object.sha')
           SHA_DEV=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/git/refs/heads/dev | jq -r '.object.sha')
-          
+
           gh api --method POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" \
             /repos/${{ github.repository_owner }}/LoopWorkspace/git/refs -f ref='refs/heads/alive-main' -f sha=$SHA_MAIN
           gh api --method POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" \
