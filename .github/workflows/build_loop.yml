@@ -1,40 +1,31 @@
-name: 4. Build Loop
-run-name: Build Loop (${{ github.ref_name }})
-
+name: Build Loop App
 on:
   workflow_dispatch:
   schedule:
     - cron: "33 9 * * 3"
     - cron: "33 7 1 * *"
 
-env:
-  UPSTREAM_REPO: LoopKit/LoopWorkspace
-  UPSTREAM_BRANCH: ${{ github.ref_name }}
-  TARGET_BRANCH: ${{ github.ref_name }}
-  ALIVE_BRANCH_MAIN: alive-main
-  ALIVE_BRANCH_DEV: alive-dev
-
 jobs:
-  check_alive_and_permissions:
-    runs-on: ubuntu-latest
-    name: Check alive branch and permissions
-    permissions:
-      contents: write
-    outputs:
-      WORKFLOW_PERMISSION: ${{ steps.set_permission.outputs.has_permission }}
-    steps:
-      - name: Check workflow permission
-        id: set_permission
-        run: |
-          echo "✅ Assuming GH_PAT is fine-grained or has workflow permissions"
-          echo "has_permission=true" >> $GITHUB_OUTPUT
-
   build:
-    needs: check_alive_and_permissions
     runs-on: macos-15
-    name: Build Loop App
     steps:
-      - name: Select Xcode
+      - name: Check required secrets
+        run: |
+          MISSING=0
+          for SECRET in GH_PAT TEAMID FASTLANE_KEY_ID FASTLANE_ISSUER_ID FASTLANE_KEY MATCH_PASSWORD; do
+            if [ -z "${{ secrets.$SECRET }}" ]; then
+              echo "❌ Missing secret: $SECRET"
+              MISSING=1
+            fi
+          done
+          if [ $MISSING -eq 1 ]; then
+            echo "⚠️ One or more secrets are missing. Aborting build."
+            exit 1
+          else
+            echo "✅ All required secrets are present."
+          fi
+
+      - name: Select Xcode version
         run: sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
 
       - name: Checkout code
@@ -42,12 +33,12 @@ jobs:
         with:
           token: ${{ secrets.GH_PAT }}
           submodules: recursive
-          ref: ${{ env.TARGET_BRANCH }}
+          ref: main
 
       - name: Install dependencies
         run: bundle install
 
-      - name: Build & Archive
+      - name: Fastlane Build & Archive
         run: bundle exec fastlane build_loop
         env:
           TEAMID: ${{ secrets.TEAMID }}
@@ -57,7 +48,7 @@ jobs:
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
 
-      - name: Upload to TestFlight
+      - name: Fastlane Upload to TestFlight
         run: bundle exec fastlane release
         env:
           TEAMID: ${{ secrets.TEAMID }}
